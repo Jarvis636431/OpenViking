@@ -250,18 +250,28 @@ async def test_commit_if_needed_still_recovers_after_crash(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "restarted,new_activity,fail_once,pending,expected_times",
+    "restarted,new_activity,fail_once,pending,idle,poll,expected_times",
     [
-        (False, False, False, 500, [10]),
-        (True, False, False, 500, [10]),
-        (False, True, False, 500, [15]),
-        (False, False, True, 500, [10, 20]),
-        (False, False, False, 6000, [0]),
+        (False, False, False, 500, 10, 5, [10]),
+        (True, False, False, 500, 10, 5, [10]),
+        (False, True, False, 500, 10, 5, [15]),
+        (False, False, True, 500, 10, 5, [10, 20]),
+        (False, False, False, 6000, 10, 5, [0]),
+        (False, False, False, 500, 5, 5, [5]),
+        (False, False, False, 500, 5, 10, [10]),
     ],
-    ids=["idle", "restart", "new-message", "commit-retry", "token-threshold"],
+    ids=[
+        "idle",
+        "restart",
+        "new-message",
+        "commit-retry",
+        "token-threshold",
+        "shipped-defaults",
+        "poll-longer-than-idle",
+    ],
 )
 async def test_watch_commits_pending_messages(
-    tmp_path, monkeypatch, restarted, new_activity, fail_once, pending, expected_times
+    tmp_path, monkeypatch, restarted, new_activity, fail_once, pending, idle, poll, expected_times
 ):
     """Unchanged polls must not defer idle commits, including after a restart."""
     now = 0
@@ -279,6 +289,7 @@ async def test_watch_commits_pending_messages(
             Cursor.zero(BYTE_OFFSET),
             Cursor(BYTE_OFFSET, {"offset": len(messages)}),
         )
+        assert fake.committed == []  # Before restart, messages were appended but not committed.
         replayer = SessionReplayer(cast(ConversationReplayClient, fake), store)
 
     async def commit(sid, keep_recent_count=0):
@@ -296,7 +307,9 @@ async def test_watch_commits_pending_messages(
             Cursor(BYTE_OFFSET, {"offset": len(messages)}),
         ),
     )
-    cfg = IngestHarnessConfig(poll_interval_seconds=5, commit=CommitPolicy(commit_idle_seconds=10))
+    cfg = IngestHarnessConfig(
+        poll_interval_seconds=poll, commit=CommitPolicy(commit_idle_seconds=idle)
+    )
     poller = IngestPoller([("claude_code", cfg, cast(LogSource, source))], replayer)
 
     async def advance(waiter, timeout):

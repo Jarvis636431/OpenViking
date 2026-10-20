@@ -115,7 +115,8 @@ class IngestPoller:
         rec = self.store.get(name, ref.native_session_id)
         if appended or (rec and rec.needs_commit):
             key = (name, ref.native_session_id)
-            # Arm recovered work once; only new messages reset the idle timer.
+            # Recovered needs_commit state has no in-memory timer after a restart.
+            # Arm it once; unchanged polls must not keep postponing the idle commit.
             if appended or key not in self._dirty:
                 self._dirty[key] = _Dirty(name, cfg, source, ref, time.monotonic())
             committed = await self.replayer.maybe_commit_on_threshold(
